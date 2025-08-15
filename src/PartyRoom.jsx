@@ -2,10 +2,10 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { supabase } from './supabaseClient';
-import QRCode from 'qrcode.react';
+import { QRCodeSVG as QRCode } from 'qrcode.react';
 
 export default function PartyRoom() {
-    const { partyId } = useParams(); // Obtiene el ID de la fiesta desde la URL
+    const { partyId } = useParams();
     const [party, setParty] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -37,7 +37,8 @@ export default function PartyRoom() {
         return <div>Fiesta no encontrada. <Link to="/">Volver al Dashboard</Link></div>;
     }
 
-    const joinUrl = `${window.location.origin}/join/${party.join_code}`; // URL hipotética para invitados
+    // URL hipotética para que los invitados se unan. La usaremos más adelante.
+    const joinUrl = `${window.location.origin}/join/${party.join_code}`; 
 
     return (
         <div style={{ display: 'flex', height: '100vh' }}>
