@@ -1,170 +1,213 @@
 // src/PartyRoom.jsx
-import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { useParams } from 'react-router-dom';
 import { supabase } from './supabaseClient';
-import { QRCodeSVG as QRCode } from 'qrcode.react';
-import VideoPlayer from './VideoPlayer';
+import YouTube from 'react-youtube';
+import Peer from 'simple-peer';
+
+// ⚠️ ¡IMPORTANTE! VERIFICA QUE ESTA URL SEA LA CORRECTA DE TU SERVIDOR EN RENDER
+const SIGNALING_URL = 'wss://partymic-signaling-server.onrender.com'; // Ejemplo, usa la tuya
 
 export default function PartyRoom() {
     const { partyId } = useParams();
     const [party, setParty] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [searchQuery, setSearchQuery] = useState('');
-    const [searchResults, setSearchResults] = useState([]);
-    const [isSearching, setIsSearching] = useState(false);
     const [songQueue, setSongQueue] = useState([]);
     const [currentlyPlaying, setCurrentlyPlaying] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [newSongUrl, setNewSongUrl] = useState('');
+    const [youtubePlayer, setYoutubePlayer] = useState(null);
+    
+    const socket = useRef();
+    const peer = useRef();
 
     useEffect(() => {
-        const fetchPartyAndQueue = async () => {
+        const fetchPartyState = async () => {
             const { data: partyData, error: partyError } = await supabase.from('parties').select('*').eq('id', partyId).single();
-            if (partyError) console.error('Error fetching party:', partyError);
-            else setParty(partyData);
+            if (partyError) {
+                console.error('Error fetching party:', partyError);
+                setLoading(false);
+                return;
+            }
+            setParty(partyData);
 
-            const { data: queueData, error: queueError } = await supabase
+            const { data: queueData, error: queueError } = await supabase.from('song_queue').select('*').eq('party_id', partyId).eq('status', 'queued').order('created_at', { ascending: true });
+            if (queueError) console.error('Error fetching queue:', queueError);
+            else setSongQueue(queueData || []);
+            
+            const { data: playingData, error: playingError } = await supabase
                 .from('song_queue')
                 .select('*')
                 .eq('party_id', partyId)
-                .eq('status', 'queued')
-                .order('created_at', { ascending: true });
-            
-            if (queueError) console.error('Error fetching queue:', queueError);
-            else setSongQueue(queueData);
+                .eq('status', 'played')
+                .order('updated_at', { ascending: false })
+                .limit(1);
+
+            if (!playingError && playingData && playingData.length > 0) {
+                setCurrentlyPlaying(playingData[0]);
+            }
             
             setLoading(false);
         };
 
-        fetchPartyAndQueue();
+        fetchPartyState();
 
         const channel = supabase.channel(`party_queue_${partyId}`)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'song_queue', filter: `party_id=eq.${partyId}` },
                 (payload) => {
                     if (payload.eventType === 'INSERT') {
-                        setSongQueue((currentQueue) => [...currentQueue, payload.new]);
+                        setSongQueue((q) => [...q, payload.new]);
                     }
-                    if (payload.eventType === 'UPDATE') {
-                        setSongQueue((currentQueue) => currentQueue.filter(song => song.id !== payload.old.id));
+                    if (payload.eventType === 'UPDATE' && payload.new.status === 'played') {
+                        setCurrentlyPlaying(payload.new);
+                        setSongQueue((q) => q.filter(song => song.id !== payload.new.id));
                     }
                 }
-            )
-            .subscribe();
-
+            ).subscribe();
+            
         return () => supabase.removeChannel(channel);
     }, [partyId]);
 
-    const handleSearch = async (e) => {
-        e.preventDefault();
-        if (!searchQuery) return;
-        setIsSearching(true);
-        const { data, error } = await supabase.functions.invoke('search-youtube', { body: { query: searchQuery } });
-        if (error) alert('Error en la búsqueda: ' + error.message);
-        else setSearchResults(data.results);
-        setIsSearching(false);
+    useEffect(() => {
+        socket.current = new WebSocket(SIGNALING_URL);
+        socket.current.onopen = () => {
+            console.log("Anfitrión: Conectado al servidor de señalización");
+            socket.current.send(JSON.stringify({ type: 'host', roomId: partyId }));
+        };
+        socket.current.onmessage = (message) => {
+            const data = JSON.parse(message.data);
+            if (!peer.current) {
+                peer.current = new Peer({ initiator: false });
+                peer.current.on('signal', (responseData) => {
+                    socket.current.send(JSON.stringify(responseData));
+                });
+                peer.current.on('stream', (guestStream) => {
+                    console.log("Anfitrión: Stream de invitado recibido");
+                });
+                peer.current.on('error', (err) => console.error('Error en Peer (anfitrión):', err));
+            }
+            peer.current.signal(data);
+        };
+        return () => {
+            if (socket.current) socket.current.close();
+            if (peer.current) peer.current.destroy();
+        };
+    }, [partyId]);
+
+    const extractYouTubeVideoId = (url) => {
+        // Múltiples patrones para diferentes formatos de URL de YouTube
+        const patterns = [
+            /(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})/,
+            /(?:https?:\/\/)?(?:www\.)?youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/,
+            /(?:https?:\/\/)?(?:www\.)?youtube\.com\/v\/([a-zA-Z0-9_-]{11})/,
+            /(?:https?:\/\/)?youtu\.be\/([a-zA-Z0-9_-]{11})/,
+            /(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?.*&v=([a-zA-Z0-9_-]{11})/
+        ];
+        
+        for (const pattern of patterns) {
+            const match = url.match(pattern);
+            if (match && match[1]) {
+                return match[1];
+            }
+        }
+        
+        return null;
     };
 
-    const handleAddToQueue = async (song) => {
-        const { error } = await supabase.from('song_queue').insert({ party_id: partyId, video_id: song.videoId, title: song.title, thumbnail_url: song.thumbnail, status: 'queued' });
-        if (error) alert('Error al agregar la canción: ' + error.message);
-        else { setSearchResults([]); setSearchQuery(''); }
-    };
-
-    const handlePlayNext = async () => {
-        const songToPlay = songQueue[0];
-        if (!songToPlay) {
-            alert("No hay más canciones en la cola.");
-            setCurrentlyPlaying(null);
+    const addSongToQueue = async () => {
+        if (!newSongUrl.trim()) return;
+        
+        const videoId = extractYouTubeVideoId(newSongUrl);
+        if (!videoId) {
+            alert('Por favor, ingresa una URL válida de YouTube');
             return;
         }
 
-        const { error } = await supabase
-            .from('song_queue')
-            .update({ status: 'played' })
-            .eq('id', songToPlay.id);
+        const { error } = await supabase.from('song_queue').insert({
+            party_id: partyId,
+            youtube_video_id: videoId,
+            title: `Video ${videoId}`,
+            status: 'queued'
+        });
 
         if (error) {
-            alert("Error al actualizar la canción: " + error.message);
+            console.error('Error adding song:', error);
+            alert('Error al agregar la canción');
         } else {
-            setCurrentlyPlaying(songToPlay);
+            setNewSongUrl('');
         }
     };
 
-    if (loading) return <div>Cargando sala de fiesta...</div>;
-    if (!party) return <div>Fiesta no encontrada. <Link to="/">Volver al Dashboard</Link></div>;
-    
-    const joinUrl = `${window.location.origin}/join/${party.join_code}`;
+    const playNextSong = async () => {
+        if (songQueue.length === 0) return;
+        
+        const nextSong = songQueue[0];
+        const { error } = await supabase.from('song_queue').update({ status: 'played' }).eq('id', nextSong.id);
+        
+        if (error) {
+            console.error('Error playing song:', error);
+        }
+    };
+
+    const onYouTubeReady = (event) => {
+        setYoutubePlayer(event.target);
+    };
+
+    const onYouTubeEnd = () => {
+        playNextSong();
+    };
+      
+    if (loading) return <div>Cargando sala del anfitrión...</div>;
+    if (!party) return <div>¡Error! No se encontró la fiesta.</div>;
 
     return (
-        <div style={{ display: 'flex', height: '100vh', color: 'white', background: '#282c34' }}>
-            <div style={{ flex: 3, padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                <h1>Fiesta: {party.name}</h1>
-                <div style={{ background: 'black', width: '640px', height: '390px', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {currentlyPlaying ? (
-                        <VideoPlayer 
-                            key={currentlyPlaying.id}
-                            videoId={currentlyPlaying.video_id} 
-                            onEnd={handlePlayNext}
-                        />
-                    ) : (
-                        <p>Presiona "Play" para empezar la fiesta</p>
-                    )}
-                </div>
-                <button onClick={handlePlayNext} style={{ padding: '10px 20px', fontSize: '1.2em' }}>
-                    {currentlyPlaying ? 'Siguiente Canción ⏯️' : 'Empezar Fiesta ▶️'}
+        <div style={{ padding: '20px', color: 'white', background: '#282c34', minHeight: '100vh' }}>
+            <h1>🎉 Sala del Anfitrión - "{party.name}"</h1>
+            <p>Código de invitación: <strong>{party.join_code}</strong></p>
+            
+            <div style={{ border: '1px solid #444', padding: '15px', borderRadius: '8px', margin: '20px 0' }}>
+                <h3>Reproductor de YouTube:</h3>
+                {currentlyPlaying ? (
+                    <YouTube
+                        videoId={currentlyPlaying.youtube_video_id}
+                        onReady={onYouTubeReady}
+                        onEnd={onYouTubeEnd}
+                        opts={{ width: '100%', height: '390' }}
+                    />
+                ) : (
+                    <p>No hay música reproduciéndose. Agrega una canción para empezar.</p>
+                )}
+            </div>
+
+            <div style={{ margin: '20px 0' }}>
+                <h3>Agregar Canción:</h3>
+                <input
+                    type="text"
+                    placeholder="URL de YouTube"
+                    value={newSongUrl}
+                    onChange={(e) => setNewSongUrl(e.target.value)}
+                    style={{ padding: '10px', width: '300px', marginRight: '10px' }}
+                />
+                <button onClick={addSongToQueue} style={{ padding: '10px' }}>
+                    ➕ Agregar a la Cola
                 </button>
             </div>
 
-            <div style={{ flex: 1, padding: '20px', borderLeft: '1px solid #444', display: 'flex', flexDirection: 'column' }}>
-                <div style={{ textAlign: 'center', background: '#1e2127', padding: '15px', borderRadius: '8px', marginBottom: '20px' }}>
-                    <h3>¡Únete a la Fiesta!</h3>
-                    <div style={{ background: 'white', padding: '10px', borderRadius: '8px', display: 'inline-block', margin: '10px 0' }}>
-                        <QRCode value={joinUrl} size={128} />
-                    </div>
-                    <h4 style={{ letterSpacing: '2px', background: '#333', padding: '10px', borderRadius: '4px' }}>
-                        {party.join_code}
-                    </h4>
-                </div>
-                
-                {/* --- Módulo de Búsqueda --- */}
-                <div>
-                    <h4>Buscar Canción</h4>
-                    <form onSubmit={handleSearch}>
-                        <input
-                            type="text"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            placeholder="Artista y nombre de la canción..."
-                            style={{ padding: '8px', width: '100%', boxSizing: 'border-box' }}
-                        />
-                        <button type="submit" disabled={isSearching} style={{ width: '100%', marginTop: '5px' }}>
-                            {isSearching ? 'Buscando...' : 'Buscar'}
-                        </button>
-                    </form>
-                    {/* FIX 2: Restaurado el mapeo de resultados de búsqueda con el botón onClick */}
-                    {searchResults.length > 0 && (
-                        <ul style={{ listStyle: 'none', padding: 0, maxHeight: '200px', overflowY: 'auto' }}>
-                            {searchResults.map(song => (
-                                <li key={song.videoId} style={{ display: 'flex', alignItems: 'center', marginBottom: '10px' }}>
-                                    <img src={song.thumbnail} alt={song.title} style={{ width: '50px', marginRight: '10px' }} />
-                                    <span style={{ fontSize: '0.9em', flex: 1 }}>{song.title}</span>
-                                    <button onClick={() => handleAddToQueue(song)} style={{ marginLeft: 'auto' }}>+</button>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
-                </div>
-
-                <h3 style={{ marginTop: '20px' }}>Siguientes en la Cola:</h3>
-                <div style={{ flex: 1, overflowY: 'auto' }}>
-                    {songQueue.length === 0 
-                        ? <p>La cola está vacía.</p> 
-                        : (<ol>{songQueue.map((song, index) => (
-                            <li key={song.id} style={{ fontWeight: index === 0 ? 'bold' : 'normal' }}>
+            <div>
+                <h3>Cola de Canciones:</h3>
+                {songQueue.length > 0 ? (
+                    <div>
+                        <ol>{songQueue.map(song => (
+                            <li key={song.id} style={{ fontSize: '1.2em', margin: '10px 0' }}>
                                 {song.title}
                             </li>
-                        ))}</ol>)
-                    }
-                </div>
-                <Link to="/" style={{ color: '#61dafb', marginTop: 'auto' }}>← Volver al Dashboard</Link>
+                        ))}</ol>
+                        <button onClick={playNextSong} style={{ padding: '10px', marginTop: '10px' }}>
+                            ▶️ Reproducir Siguiente
+                        </button>
+                    </div>
+                ) : (
+                    <p>La cola está vacía.</p>
+                )}
             </div>
         </div>
     );

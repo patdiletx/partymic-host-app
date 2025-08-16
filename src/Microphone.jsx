@@ -1,50 +1,48 @@
 // src/Microphone.jsx
+
 import React, { useState, useEffect, useRef } from 'react';
 
-export default function Microphone() {
+// El componente ahora acepta una prop `onStreamReady`
+export default function Microphone({ onStreamReady }) {
   const [isMuted, setIsMuted] = useState(true);
   const [error, setError] = useState('');
-  const audioStream = useRef(null); // Usamos useRef para mantener la referencia al stream
-
-  const getMicrophone = async () => {
-    try {
-      // Pedimos permiso al usuario para acceder al micrófono
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          // Opciones para mejorar la calidad del audio y reducir el eco
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-        video: false,
-      });
-      audioStream.current = stream;
-      setError('');
-      console.log("Micrófono conectado:", stream);
-    } catch (err) {
-      console.error("Error al acceder al micrófono:", err);
-      setError('Permiso de micrófono denegado. Revisa la configuración de tu navegador.');
-    }
-  };
+  const audioStream = useRef(null);
 
   useEffect(() => {
-    // Cuando el componente se monta, pedimos acceso al micrófono
+    const getMicrophone = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { 
+            echoCancellation: true, 
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        audioStream.current = stream;
+        // Llamamos a la función del padre con el stream de audio
+        if (onStreamReady) {
+            onStreamReady(stream);
+        }
+        setError('');
+      } catch (err) {
+        console.error("Error al acceder al micrófono:", err);
+        setError('Permiso de micrófono denegado. Revisa la configuración de tu navegador.');
+      }
+    };
+
     getMicrophone();
 
-    // Función de limpieza para detener el stream cuando el componente se desmonte
     return () => {
       if (audioStream.current) {
         audioStream.current.getTracks().forEach(track => track.stop());
-        console.log("Micrófono desconectado.");
       }
     };
-  }, []); // El array vacío asegura que esto solo se ejecute una vez
+  }, [onStreamReady]);
 
   const toggleMute = () => {
     if (!audioStream.current) return;
-    audioStream.current.getAudioTracks().forEach(track => {
-      track.enabled = !track.enabled;
-    });
+    // Habilitamos o deshabilitamos la pista de audio
+    audioStream.current.getAudioTracks()[0].enabled = !isMuted;
     setIsMuted(prev => !prev);
   };
 
