@@ -29,6 +29,7 @@ export default function PartyRoom() {
     const [songQueue, setSongQueue] = useState([]);
     const [currentlyPlaying, setCurrentlyPlaying] = useState(null);
     const [guestStreams, setGuestStreams] = useState([]);
+    const [webSocketConnected, setWebSocketConnected] = useState(false);
     const socket = useRef();
     const peersRef = useRef({});
 
@@ -42,10 +43,17 @@ export default function PartyRoom() {
             if (queueError) console.error('Error fetching queue:', queueError);
             else setSongQueue(queueData || []);
             
-            // --- CORRECCIÓN AQUÍ ---
-            // Se elimina .single() para evitar el error 400 si no hay canciones.
-            const { data: playingData, error: playingError } = await supabase.from('song_queue').select('*').eq('party_id', partyId).eq('status', 'played').order('updated_at', { ascending: false }).limit(1);
-            if (!playingError && playingData && playingData.length > 0) {
+            const { data: playingData, error: playingError } = await supabase
+                .from('song_queue')
+                .select('*')
+                .eq('party_id', partyId)
+                .eq('status', 'played')
+                .order('created_at', { ascending: false })
+                .limit(1);
+            
+            if (playingError) {
+                console.error('Error fetching currently playing song:', playingError);
+            } else if (playingData && playingData.length > 0) {
                 setCurrentlyPlaying(playingData[0]);
             }
             
@@ -68,14 +76,43 @@ export default function PartyRoom() {
     }, [partyId]);
 
     useEffect(() => {
-        socket.current = new WebSocket(SIGNALING_URL);
-        socket.current.onopen = () => {
-            console.log("Anfitrión: Conectado al servidor de señalización");
-            socket.current.send(JSON.stringify({ type: 'join', roomId: partyId }));
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 3;
+        const reconnectDelay = 2000;
+
+        const connectWebSocket = () => {
+            socket.current = new WebSocket(SIGNALING_URL);
+            
+            socket.current.onopen = () => {
+                console.log("Anfitrión: Conectado al servidor de señalización");
+                setWebSocketConnected(true);
+                socket.current.send(JSON.stringify({ type: 'join', roomId: partyId }));
+                reconnectAttempts = 0;
+            };
+
+            socket.current.onclose = (event) => {
+                setWebSocketConnected(false);
+                console.log(`WebSocket cerrado. Código: ${event.code}, Razón: ${event.reason}`);
+                if (reconnectAttempts < maxReconnectAttempts && event.code !== 1006) {
+                    reconnectAttempts++;
+                    console.log(`Intentando reconectar... (${reconnectAttempts}/${maxReconnectAttempts})`);
+                    setTimeout(connectWebSocket, reconnectDelay);
+                } else {
+                    console.warn("Servidor de señalización no disponible. Funcionando sin audio de invitados.");
+                }
+            };
+
+            socket.current.onerror = (error) => {
+                console.error("Error de WebSocket:", error);
+            };
         };
-        // Lógica de WebRTC para recibir señales y streams...
+
+        connectWebSocket();
+
         return () => {
-            if (socket.current) socket.current.close();
+            if (socket.current) {
+                socket.current.close();
+            }
         };
     }, [partyId]);
 
@@ -98,12 +135,18 @@ export default function PartyRoom() {
     const handlePlayNext = async () => {
         const songToPlay = songQueue[0];
         if (!songToPlay) {
-            alert("No hay más canciones en la cola.");
+            alert("No hay canciones en la cola. Agrega una canción para empezar la fiesta.");
             setCurrentlyPlaying(null);
             return;
         }
         const { error } = await supabase.from('song_queue').update({ status: 'played' }).eq('id', songToPlay.id);
-        if (error) alert("Error al actualizar la canción: " + error.message);
+        if (error) {
+            alert("Error al actualizar la canción: " + error.message);
+        } else {
+            // Inmediatamente actualizar el estado local para que se reproduzca
+            setCurrentlyPlaying(songToPlay);
+            setSongQueue(currentQueue => currentQueue.filter(song => song.id !== songToPlay.id));
+        }
     };
 
     if (loading) return <div>Cargando sala de fiesta...</div>;
@@ -140,6 +183,11 @@ export default function PartyRoom() {
                     <h4 style={{ letterSpacing: '2px', background: '#333', padding: '10px', borderRadius: '4px' }}>
                         {party.join_code}
                     </h4>
+                    {!webSocketConnected && (
+                        <p style={{ fontSize: '0.8em', color: '#ffa500', marginTop: '10px' }}>
+                            ⚠️ Audio de invitados no disponible
+                        </p>
+                    )}
                 </div>
                 
                 <div>
