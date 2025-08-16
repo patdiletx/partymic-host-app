@@ -1,4 +1,4 @@
-// src/PartyRoom.jsx - Versión simplificada para MVP funcional
+// src/PartyRoom.jsx - Versión con debug agresivo para encontrar el problema
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { supabase } from './supabaseClient';
@@ -14,56 +14,79 @@ export default function PartyRoom() {
     const [isSearching, setIsSearching] = useState(false);
     const [songQueue, setSongQueue] = useState([]);
     const [currentlyPlaying, setCurrentlyPlaying] = useState(null);
+    const [debugInfo, setDebugInfo] = useState('Iniciando...');
+
+    // Función helper para actualizar debug info
+    const updateDebug = (message) => {
+        console.log('🐛 DEBUG:', message);
+        setDebugInfo(message);
+    };
 
     useEffect(() => {
         const fetchPartyAndQueue = async () => {
-            // Cargar datos de la fiesta
-            const { data: partyData, error: partyError } = await supabase
-                .from('parties')
-                .select('*')
-                .eq('id', partyId)
-                .single();
-            
-            if (partyError) {
-                console.error('Error fetching party:', partyError);
-            } else {
+            try {
+                updateDebug('Cargando datos de la fiesta...');
+                
+                // Cargar datos de la fiesta
+                const { data: partyData, error: partyError } = await supabase
+                    .from('parties')
+                    .select('*')
+                    .eq('id', partyId)
+                    .single();
+                
+                if (partyError) {
+                    updateDebug(`Error cargando fiesta: ${partyError.message}`);
+                    setLoading(false);
+                    return;
+                }
                 setParty(partyData);
-            }
+                updateDebug(`Fiesta cargada: ${partyData.name}`);
 
-            // Cargar cola de canciones
-            const { data: queueData, error: queueError } = await supabase
-                .from('song_queue')
-                .select('*')
-                .eq('party_id', partyId)
-                .eq('status', 'queued')
-                .order('created_at', { ascending: true });
-            
-            if (queueError) {
-                console.error('Error fetching queue:', queueError);
-            } else {
-                setSongQueue(queueData || []);
-            }
-            
-            // CORRECCIÓN: Buscar canción actual sin .single() para evitar error 400
-            const { data: playingData, error: playingError } = await supabase
-                .from('song_queue')
-                .select('*')
-                .eq('party_id', partyId)
-                .eq('status', 'played')
-                .order('updated_at', { ascending: false })
-                .limit(1);
+                // Cargar cola de canciones
+                updateDebug('Cargando cola de canciones...');
+                const { data: queueData, error: queueError } = await supabase
+                    .from('song_queue')
+                    .select('*')
+                    .eq('party_id', partyId)
+                    .eq('status', 'queued')
+                    .order('created_at', { ascending: true });
+                
+                if (queueError) {
+                    updateDebug(`Error cargando cola: ${queueError.message}`);
+                } else {
+                    setSongQueue(queueData || []);
+                    updateDebug(`Cola cargada: ${queueData?.length || 0} canciones`);
+                }
+                
+                // Buscar canción actual
+                updateDebug('Buscando canción actual...');
+                const { data: playedSongs, error: playingError } = await supabase
+                    .from('song_queue')
+                    .select('*')
+                    .eq('party_id', partyId)
+                    .eq('status', 'played')
+                    .order('updated_at', { ascending: false });
 
-            // Solo establecer si encontramos una canción
-            if (!playingError && playingData && playingData.length > 0) {
-                setCurrentlyPlaying(playingData[0]);
+                if (!playingError && playedSongs && playedSongs.length > 0) {
+                    setCurrentlyPlaying(playedSongs[0]);
+                    updateDebug(`Canción actual: ${playedSongs[0].title}`);
+                } else {
+                    updateDebug('No hay canción reproduciéndose');
+                    setCurrentlyPlaying(null);
+                }
+                
+                setLoading(false);
+                updateDebug('Carga inicial completa');
+            } catch (err) {
+                updateDebug(`Error general: ${err.message}`);
+                setLoading(false);
             }
-            
-            setLoading(false);
         };
 
         fetchPartyAndQueue();
 
-        // Suscripción en tiempo real para actualizaciones de la cola
+        // Suscripción en tiempo real
+        updateDebug('Configurando suscripción en tiempo real...');
         const channel = supabase.channel(`party_queue_${partyId}`)
             .on('postgres_changes', { 
                 event: '*', 
@@ -71,22 +94,34 @@ export default function PartyRoom() {
                 table: 'song_queue', 
                 filter: `party_id=eq.${partyId}` 
             }, (payload) => {
+                updateDebug(`Actualización recibida: ${payload.eventType} - ${payload.new?.title || 'sin título'}`);
+                
                 if (payload.eventType === 'INSERT' && payload.new.status === 'queued') {
-                    setSongQueue((currentQueue) => [...currentQueue, payload.new]);
+                    setSongQueue((currentQueue) => {
+                        const newQueue = [...currentQueue, payload.new];
+                        updateDebug(`Cola actualizada: ${newQueue.length} canciones`);
+                        return newQueue;
+                    });
                 }
-                if (payload.eventType === 'UPDATE') {
-                    if (payload.new.status === 'played') {
-                        // Una canción empezó a reproducirse
-                        setCurrentlyPlaying(payload.new);
-                        setSongQueue((currentQueue) => 
-                            currentQueue.filter(song => song.id !== payload.new.id)
-                        );
-                    }
+                
+                if (payload.eventType === 'UPDATE' && payload.new.status === 'played') {
+                    updateDebug(`Nueva canción reproduciéndose: ${payload.new.title}`);
+                    setCurrentlyPlaying(payload.new);
+                    setSongQueue((currentQueue) => {
+                        const filteredQueue = currentQueue.filter(song => song.id !== payload.new.id);
+                        updateDebug(`Cola después de reproducir: ${filteredQueue.length} canciones`);
+                        return filteredQueue;
+                    });
                 }
             })
             .subscribe();
 
-        return () => supabase.removeChannel(channel);
+        updateDebug('Suscripción configurada');
+
+        return () => {
+            supabase.removeChannel(channel);
+            updateDebug('Limpieza realizada');
+        };
     }, [partyId]);
 
     const handleSearch = async (e) => {
@@ -94,19 +129,22 @@ export default function PartyRoom() {
         if (!searchQuery.trim()) return;
         
         setIsSearching(true);
+        updateDebug(`Buscando: ${searchQuery}`);
+        
         try {
             const { data, error } = await supabase.functions.invoke('search-youtube', {
                 body: { query: `${searchQuery} karaoke` }
             });
             
             if (error) {
-                console.error('Search error:', error);
+                updateDebug(`Error en búsqueda: ${error.message}`);
                 alert('Error en la búsqueda: ' + error.message);
             } else {
+                updateDebug(`Encontrados ${data.results?.length || 0} resultados`);
                 setSearchResults(data.results || []);
             }
         } catch (err) {
-            console.error('Search failed:', err);
+            updateDebug(`Error de conexión: ${err.message}`);
             alert('Error de conexión al buscar canciones');
         }
         setIsSearching(false);
@@ -114,6 +152,7 @@ export default function PartyRoom() {
 
     const handleAddToQueue = async (song) => {
         try {
+            updateDebug(`Agregando: ${song.title}`);
             const { error } = await supabase
                 .from('song_queue')
                 .insert({
@@ -125,42 +164,59 @@ export default function PartyRoom() {
                 });
 
             if (error) {
-                console.error('Error adding song:', error);
+                updateDebug(`Error agregando: ${error.message}`);
                 alert('Error al agregar la canción: ' + error.message);
             } else {
+                updateDebug('Canción agregada exitosamente');
                 setSearchResults([]);
                 setSearchQuery('');
-                console.log('Canción agregada exitosamente');
             }
         } catch (err) {
-            console.error('Failed to add song:', err);
+            updateDebug(`Error conexión al agregar: ${err.message}`);
             alert('Error de conexión al agregar la canción');
         }
     };
 
     const handlePlayNext = async () => {
-        const songToPlay = songQueue[0];
-        if (!songToPlay) {
+        updateDebug('🎵 INICIANDO REPRODUCCIÓN...');
+        
+        if (songQueue.length === 0) {
+            updateDebug('❌ No hay canciones en la cola');
             alert("No hay más canciones en la cola.");
             setCurrentlyPlaying(null);
             return;
         }
 
+        const songToPlay = songQueue[0];
+        updateDebug(`🎯 Canción a reproducir: ${songToPlay.title} (ID: ${songToPlay.id})`);
+
         try {
+            updateDebug('📡 Enviando actualización a Supabase...');
             const { error } = await supabase
                 .from('song_queue')
                 .update({ status: 'played' })
                 .eq('id', songToPlay.id);
 
             if (error) {
-                console.error('Error playing song:', error);
+                updateDebug(`❌ Error Supabase: ${error.message}`);
                 alert("Error al actualizar la canción: " + error.message);
             } else {
-                console.log('Canción marcada como reproducida');
-                // La suscripción en tiempo real se encargará de actualizar el estado
+                updateDebug(`✅ Supabase actualizado exitosamente`);
+                
+                // Actualización local inmediata y forzada
+                updateDebug(`🔄 Actualizando estado local directamente...`);
+                const updatedSong = { ...songToPlay, status: 'played' };
+                
+                setCurrentlyPlaying(updatedSong);
+                setSongQueue((currentQueue) => {
+                    const newQueue = currentQueue.filter(song => song.id !== songToPlay.id);
+                    updateDebug(`📋 Nueva cola local: ${newQueue.length} canciones`);
+                    return newQueue;
+                });
+                updateDebug(`🎉 Estado actualizado FORZADAMENTE. Ahora reproduciendo: ${updatedSong.title}`);
             }
         } catch (err) {
-            console.error('Failed to play song:', err);
+            updateDebug(`💥 Error de conexión: ${err.message}`);
             alert('Error de conexión al reproducir la canción');
         }
     };
@@ -174,7 +230,10 @@ export default function PartyRoom() {
             color: 'white', 
             background: '#282c34' 
         }}>
-            Cargando sala de fiesta...
+            <div>
+                <h2>Cargando sala de fiesta...</h2>
+                <p>{debugInfo}</p>
+            </div>
         </div>
     );
 
@@ -187,7 +246,11 @@ export default function PartyRoom() {
             color: 'white', 
             background: '#282c34' 
         }}>
-            Fiesta no encontrada. <Link to="/">Volver al Dashboard</Link>
+            <div>
+                <h2>Fiesta no encontrada</h2>
+                <p>{debugInfo}</p>
+                <Link to="/">Volver al Dashboard</Link>
+            </div>
         </div>
     );
     
@@ -210,9 +273,31 @@ export default function PartyRoom() {
                 borderRight: '1px solid #444' 
             }}>
                 <h1>🎉 {party.name}</h1>
-                <p style={{ marginBottom: '20px', opacity: 0.8 }}>
+                <p style={{ marginBottom: '10px', opacity: 0.8 }}>
                     Sala del Anfitrión - Gestiona tu fiesta de karaoke
                 </p>
+                
+                {/* Debug Info Prominente */}
+                <div style={{ 
+                    fontSize: '0.9em', 
+                    marginBottom: '20px',
+                    padding: '10px',
+                    backgroundColor: '#333',
+                    borderRadius: '8px',
+                    border: '2px solid #ff6b6b',
+                    maxWidth: '600px',
+                    textAlign: 'center'
+                }}>
+                    <strong>🐛 DEBUG:</strong> {debugInfo}
+                    <br />
+                    <strong>Estado:</strong> {currentlyPlaying ? `Reproduciendo "${currentlyPlaying.title}"` : 'Sin canción actual'} | 
+                    <strong> Cola:</strong> {songQueue.length} canciones
+                    {currentlyPlaying && (
+                        <div style={{ marginTop: '5px', fontSize: '0.8em', color: '#4CAF50' }}>
+                            <strong>Video ID:</strong> {currentlyPlaying.video_id}
+                        </div>
+                    )}
+                </div>
                 
                 <div style={{ 
                     background: 'black', 
@@ -226,11 +311,13 @@ export default function PartyRoom() {
                     border: '2px solid #444'
                 }}>
                     {currentlyPlaying ? (
-                        <VideoPlayer 
-                            key={currentlyPlaying.id}
-                            videoId={currentlyPlaying.video_id} 
-                            onEnd={handlePlayNext}
-                        />
+                        <div style={{ width: '100%', height: '100%' }}>
+                            <VideoPlayer 
+                                key={currentlyPlaying.id}
+                                videoId={currentlyPlaying.video_id} 
+                                onEnd={handlePlayNext}
+                            />
+                        </div>
                     ) : (
                         <div style={{ textAlign: 'center', padding: '20px' }}>
                             <p style={{ fontSize: '1.2em', marginBottom: '10px' }}>
@@ -239,6 +326,11 @@ export default function PartyRoom() {
                             <p style={{ opacity: 0.7 }}>
                                 Agrega canciones a la cola y comienza a cantar
                             </p>
+                            {songQueue.length === 0 && (
+                                <p style={{ color: '#ff6b6b', marginTop: '10px' }}>
+                                    ⚠️ Necesitas agregar canciones primero
+                                </p>
+                            )}
                         </div>
                     )}
                 </div>
@@ -275,7 +367,7 @@ export default function PartyRoom() {
                 flexDirection: 'column',
                 overflowY: 'auto'
             }}>
-                {/* QR Code y código para unirse */}
+                {/* QR Code */}
                 <div style={{ 
                     textAlign: 'center', 
                     background: '#1e2127', 
@@ -284,9 +376,6 @@ export default function PartyRoom() {
                     marginBottom: '20px' 
                 }}>
                     <h3>¡Únete a la Fiesta!</h3>
-                    <p style={{ fontSize: '0.9em', opacity: 0.8, margin: '5px 0' }}>
-                        Escanea con tu celular
-                    </p>
                     <div style={{ 
                         background: 'white', 
                         padding: '10px', 
@@ -307,7 +396,7 @@ export default function PartyRoom() {
                     </h4>
                 </div>
                 
-                {/* Buscador de canciones */}
+                {/* Buscador */}
                 <div style={{ marginBottom: '20px' }}>
                     <h4>Buscar Canción</h4>
                     <form onSubmit={handleSearch}>
@@ -404,7 +493,7 @@ export default function PartyRoom() {
                 </div>
 
                 {/* Cola de canciones */}
-                <h3 style={{ marginTop: '20px' }}>Cola de Canciones ({songQueue.length})</h3>
+                <h3>Cola de Canciones ({songQueue.length})</h3>
                 <div style={{ flex: 1, overflowY: 'auto' }}>
                     {songQueue.length === 0 ? (
                         <div style={{ 
@@ -479,11 +568,8 @@ export default function PartyRoom() {
                         padding: '10px',
                         textAlign: 'center',
                         border: '1px solid #61dafb',
-                        borderRadius: '4px',
-                        transition: 'background-color 0.3s'
+                        borderRadius: '4px'
                     }}
-                    onMouseOver={(e) => e.target.style.backgroundColor = '#61dafb33'}
-                    onMouseOut={(e) => e.target.style.backgroundColor = 'transparent'}
                 >
                     ← Volver al Dashboard
                 </Link>
