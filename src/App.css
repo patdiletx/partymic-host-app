@@ -1,183 +1,270 @@
-/* src/App.css - Nuevo Diseño Profesional */
+/* src/App.css - Diseño "Netflix Inspired" */
 
-/* --- Variables de Diseño y Reseteo Básico --- */
+/* --- Variables Globales y Reseteo --- */
 :root {
-  --primary-color: #8e44ad;
-  --primary-color-light: #9b59b6;
-  --secondary-color: #2c3e50;
-  --dark-bg: #233140;
-  --light-bg: #34495e;
-  --text-color: #ecf0f1;
-  --text-color-muted: #bdc3c7;
-  --success-color: #27ae60;
-  --danger-color: #c0392b;
-  --font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
-  --border-radius: 8px;
+  --black-pearl: #141414; /* Negro principal de fondo (como Netflix) */
+  --charcoal: #222222;
+  --gray-light: #333333;
+  --text-primary: #ffffff;
+  --text-secondary: #a0a0a0;
+  --brand-red: #E50914; /* Rojo icónico para acentos */
+  --brand-red-hover: #f40612;
+  --success: #27ae60;
+  --font-sans: 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
+  --border-radius: 6px;
 }
 
 body {
   margin: 0;
-  background-color: var(--secondary-color);
-  color: var(--text-color);
-  font-family: var(--font-family);
-  overflow-x: hidden;
+  background-color: var(--black-pearl);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-#root {
-  max-width: none;
-  margin: 0;
-  padding: 0;
+* {
+  box-sizing: border-box;
 }
 
-/* --- Estilos de Componentes Base --- */
+/* --- Estilos Base para Componentes --- */
 button {
   border-radius: var(--border-radius);
-  border: 1px solid transparent;
-  padding: 0.8em 1.4em;
-  font-size: 1em;
-  font-weight: 500;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 600;
   font-family: inherit;
-  background-color: var(--primary-color);
+  background-color: var(--brand-red);
   color: white;
   cursor: pointer;
-  transition: background-color 0.25s, transform 0.1s;
+  transition: background-color 0.2s ease, transform 0.1s ease;
 }
 button:hover {
-  background-color: var(--primary-color-light);
+  background-color: var(--brand-red-hover);
 }
 button:disabled {
-  background-color: #7f8c8d;
+  background-color: #555;
   cursor: not-allowed;
 }
 button:active {
-    transform: scale(0.98);
+  transform: scale(0.97);
 }
 
 input[type="text"] {
   width: 100%;
-  padding: 12px;
-  margin: 5px 0 10px 0;
-  box-sizing: border-box;
-  background-color: var(--dark-bg);
-  border: 1px solid var(--light-bg);
-  color: var(--text-color);
+  padding: 1rem;
+  margin-bottom: 0.5rem;
+  background-color: var(--gray-light);
+  border: 1px solid #444;
+  color: var(--text-primary);
   border-radius: var(--border-radius);
-  font-size: 1em;
+  font-size: 1rem;
 }
 
-/* --- Layout de la Sala del Anfitrión ("Vista de TV") --- */
-.party-room {
+/* --- Layout Principal (Mobile First) --- */
+.host-view, .guest-view {
+  padding: 1rem;
+}
+
+/* --- Vista del Anfitrión (PartyRoom) --- */
+.host-view {
   display: flex;
+  flex-direction: column;
   height: 100vh;
+  overflow: hidden;
 }
-.party-room-main {
-  flex: 3;
-  padding: 2rem;
+
+.host-main-content {
+  flex-grow: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-}
-.party-room-sidebar {
-  flex: 1;
-  padding: 2rem;
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  background-color: var(--dark-bg);
-  border-left: 2px solid var(--light-bg);
+  padding: 1rem;
 }
 
-.video-player-wrapper {
-  background: black;
+.video-container {
+  position: relative;
   width: 100%;
-  max-width: 854px; /* 480p */
+  max-width: 960px;
   aspect-ratio: 16 / 9;
-  margin-bottom: 2rem;
+  background-color: #000;
   border-radius: var(--border-radius);
+  margin-bottom: 1.5rem;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 2px solid var(--light-bg);
-  color: var(--text-color-muted);
 }
+
 .video-placeholder {
-  font-size: 1.5em;
-  padding: 2rem;
-  text-align: center;
-}
-.main-controls button {
-  font-size: 1.5rem;
-  padding: 1rem 2rem;
+  color: var(--text-secondary);
+  font-size: 1.2rem;
 }
 
-/* --- Layout de la Sala del Invitado ("Vista Móvil") --- */
-.guest-container {
-  max-width: 500px;
-  margin: 0 auto;
-  padding: 1.5rem;
-}
-.status-card {
-  margin: 20px 0;
-  padding: 15px;
-  background: var(--light-bg);
+.host-controls { text-align: center; }
+.host-controls .party-name { margin-bottom: 1rem; font-size: 1.5rem; }
+.host-controls .mic-status {
+  background-color: var(--charcoal);
+  padding: 0.5rem 1rem;
   border-radius: var(--border-radius);
-  text-align: center;
+  margin-bottom: 1.5rem;
+  display: inline-block;
 }
-.currently-playing-card {
-  margin-bottom: 20px;
-  padding: 15px;
-  background-color: #27ae603a;
-  border-left: 5px solid var(--success-color);
-  border-radius: var(--border-radius);
+.host-controls .play-btn {
+  font-size: 1.2rem;
+  padding: 0.8rem 2rem;
 }
 
-/* --- Componentes Compartidos (Cola, Búsqueda) --- */
-.sidebar-box {
-  background: var(--light-bg);
-  padding: 1.5rem;
+.sidebar {
+  width: 100%;
+  background-color: var(--charcoal);
+  padding: 1rem;
   border-radius: var(--border-radius);
-  margin-bottom: 2rem;
+  margin-top: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
 }
-.song-queue-list {
-  flex: 1;
+
+/* --- Media Query para TV / Desktop --- */
+@media (min-width: 1024px) {
+  .host-view {
+    flex-direction: row;
+  }
+  .sidebar {
+    width: 380px;
+    margin-top: 0;
+    margin-left: 1rem;
+    height: 100vh;
+    padding: 1.5rem;
+  }
+  .host-main-content {
+    padding: 2rem;
+  }
+  .host-controls .party-name { font-size: 2.5rem; }
+  .host-controls .mic-status { font-size: 1.1rem; }
+  .video-container { max-width: none; }
+}
+
+
+/* --- Componentes de la Sidebar y Guest View --- */
+.join-info, .search-box, .queue-box {
+  margin-bottom: 1.5rem;
+}
+.join-info .qr-code {
+  background: white;
+  padding: 10px;
+  border-radius: var(--border-radius);
+  display: inline-block;
+  margin: 1rem 0;
+}
+.join-info .party-code {
+  font-family: 'Courier New', Courier, monospace;
+  background-color: var(--black-pearl);
+  padding: 0.8rem;
+  border-radius: var(--border-radius);
+  letter-spacing: 3px;
+  font-size: 1.2rem;
+}
+
+.queue-list {
+  flex-grow: 1;
   overflow-y: auto;
-  padding-right: 10px;
+  max-height: 40vh; /* Límite para scroll en móvil */
+  padding-right: 5px; /* Evita que el scroll tape contenido */
 }
-.song-queue-item {
+
+@media (min-width: 1024px) {
+  .queue-list { max-height: none; }
+}
+
+.song-item {
   display: flex;
   align-items: center;
-  padding: 10px;
-  background: var(--secondary-color);
+  margin-bottom: 0.8rem;
+  padding: 0.5rem;
+  background-color: var(--gray-light);
   border-radius: var(--border-radius);
-  margin-bottom: 10px;
-  transition: background-color 0.2s;
 }
-.song-queue-item.next-up {
-  background-color: #27ae6055;
+.song-item.next-up {
+  outline: 2px solid var(--success);
+  box-shadow: 0 0 10px var(--success);
 }
-.song-queue-item img {
-  width: 64px;
-  height: 48px;
+.song-item img {
+  width: 80px;
+  height: 60px;
   border-radius: 4px;
-  margin-right: 15px;
+  margin-right: 1rem;
   object-fit: cover;
   flex-shrink: 0;
 }
-.song-queue-item-title {
-  flex-grow: 1;
+.song-item .details {
   overflow: hidden;
-  text-overflow: ellipsis;
+  display: flex;
+  flex-direction: column;
+}
+.song-item .title {
   white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  font-weight: 600;
 }
-.song-queue-item .remove-btn {
-  margin-left: 10px;
-  background: var(--danger-color);
-  padding: 6px 10px;
-  font-size: 0.9em;
+.song-item .actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
 }
-.song-queue-item .add-btn {
-  margin-left: 10px;
-  background: var(--success-color);
-  padding: 6px 10px;
+.song-item .actions button {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.9rem;
+}
+.song-item .actions .add-btn {
+  background-color: var(--success);
+}
+.song-item .actions .remove-btn {
+  background-color: var(--danger-color);
+}
+
+.guest-view { max-width: 500px; margin: 0 auto; }
+.guest-view .currently-playing {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background-color: rgba(0, 0, 0, 0.3);
+  border-left: 4px solid var(--brand-red);
+  border-radius: var(--border-radius);
+}
+.text-center {
+  text-align: center;
+}
+
+.mic-control-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 1rem;
+  font-size: 1.1rem;
+  margin: 1.5rem 0;
+  border: 2px solid var(--gray-light);
+  background-color: transparent;
+  color: var(--text-primary);
+  transition: background-color 0.2s, border-color 0.2s;
+}
+
+.mic-control-button.muted {
+  border-color: var(--brand-red);
+  color: var(--brand-red);
+}
+
+.mic-control-button:hover {
+  background-color: var(--gray-light);
+}
+
+.mic-control-button.muted:hover {
+  background-color: #e5091422; /* Rojo con transparencia */
+}
+
+.mic-control-button span {
+  margin-left: 0.5rem;
 }
