@@ -1,4 +1,4 @@
-// src/PartyRoom.jsx - Versión Definitiva
+// src/PartyRoom.jsx - Versión con actualización de UI instantánea al eliminar
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from './supabaseClient';
@@ -31,7 +31,6 @@ export default function PartyRoom() {
                 if (queueError) throw queueError;
                 setSongQueue(queueData || []);
                 
-                // Intenta buscar una canción que ya se estaba reproduciendo
                 const { data: playedSongs } = await supabase.from('song_queue').select('*').eq('party_id', partyId).eq('status', 'played').order('updated_at', { ascending: false }).limit(1);
                 if (playedSongs && playedSongs.length > 0) {
                     setCurrentlyPlaying(playedSongs[0]);
@@ -49,15 +48,15 @@ export default function PartyRoom() {
         const songsChannel = supabase.channel(`party_queue_${partyId}`);
         songsChannel.on('postgres_changes', { event: '*', schema: 'public', table: 'song_queue', filter: `party_id=eq.${partyId}` },
             async (payload) => {
-                // Esta suscripción ahora SOLO actualiza la lista de la cola.
-                // La lógica de reproducción se maneja en handlePlayNext.
+                if (payload.eventType === 'DELETE' && currentlyPlaying && payload.old.id === currentlyPlaying.id) {
+                    return; 
+                }
                 const { data: queueData } = await supabase.from('song_queue').select('*').eq('party_id', partyId).eq('status', 'queued').order('created_at', { ascending: true });
                 setSongQueue(queueData || []);
             }
         ).subscribe();
         
         const webrtcChannel = supabase.channel(`webrtc-party-${partyId}`);
-        // ... (Lógica de WebRTC se mantiene igual)
         webrtcChannel.on('broadcast', { event: 'signal-offer' }, ({ payload }) => {
             if (peerRef.current || !payload.offer) return;
             setMicStatus('Oferta de conexión recibida...');
@@ -82,7 +81,7 @@ export default function PartyRoom() {
             supabase.removeChannel(webrtcChannel);
             if (peerRef.current) peerRef.current.destroy();
         };
-    }, [partyId]);
+    }, [partyId, currentlyPlaying]);
     
     const handleSearch = async (e) => {
         e.preventDefault();
@@ -103,15 +102,13 @@ export default function PartyRoom() {
         }
     };
 
-    // --- FUNCIÓN 'handlePlayNext' CORREGIDA Y ROBUSTA ---
     const handlePlayNext = async () => {
         if (songQueue.length === 0) {
-            setCurrentlyPlaying(null); // Limpia el reproductor si no hay más canciones
+            setCurrentlyPlaying(null);
             return;
         }
         const songToPlay = songQueue[0];
         
-        // Actualizamos y pedimos la fila de vuelta
         const { data, error } = await supabase
             .from('song_queue')
             .update({ status: 'played' })
@@ -122,9 +119,25 @@ export default function PartyRoom() {
         if (error) {
             alert(`Error al reproducir la canción: ${error.message}`);
         } else {
-            // Actualizamos el estado directamente con la respuesta
             setCurrentlyPlaying(data);
-            // La suscripción de Supabase ya se encargará de remover la canción de la UI de la cola
+        }
+    };
+
+    // --- FUNCIÓN MODIFICADA ---
+    const handleRemoveFromQueue = async (songId) => {
+        // Actualizamos el estado local de forma optimista para una UI más rápida
+        setSongQueue(currentQueue => currentQueue.filter(song => song.id !== songId));
+
+        const { error } = await supabase
+            .from('song_queue')
+            .delete()
+            .eq('id', songId);
+
+        if (error) {
+            alert(`Error al eliminar la canción: ${error.message}`);
+            // Si hay un error, volvemos a cargar la cola desde la DB para revertir el cambio
+            const { data: queueData } = await supabase.from('song_queue').select('*').eq('party_id', partyId).eq('status', 'queued').order('created_at', { ascending: true });
+            setSongQueue(queueData || []);
         }
     };
 
@@ -133,7 +146,6 @@ export default function PartyRoom() {
 
     const joinUrl = `${window.location.origin}/join/${party.join_code}`;
 
-    // --- JSX (con la búsqueda y cola restauradas) ---
     return (
         <div style={{ display: 'flex', height: '100vh', color: 'white', background: '#282c34' }}>
             <audio ref={audioPlayerRef} autoPlay />
@@ -176,7 +188,39 @@ export default function PartyRoom() {
                 <h3 style={{marginTop: '20px'}}>Cola ({songQueue.length})</h3>
                 <div style={{ flex: 1, overflowY: 'auto' }}>
                     {songQueue.length > 0 ? (
-                        songQueue.map((song, i) => <div key={song.id} style={{padding: '8px', background: i === 0 ? '#2a4d3a' : '#333', borderRadius: '4px', marginBottom: '5px', borderLeft: i === 0 ? '4px solid #4CAF50' : 'none'}}>{i + 1}. {song.title}</div>)
+                        songQueue.map((song, i) => (
+                            <div 
+                                key={song.id} 
+                                style={{
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    justifyContent: 'space-between',
+                                    padding: '8px', 
+                                    background: i === 0 ? '#2a4d3a' : '#333', 
+                                    borderRadius: '4px', 
+                                    marginBottom: '5px', 
+                                    borderLeft: i === 0 ? '4px solid #4CAF50' : 'none'
+                                }}
+                            >
+                                <span style={{overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '10px'}}>
+                                    {i + 1}. {song.title}
+                                </span>
+                                <button 
+                                    onClick={() => handleRemoveFromQueue(song.id)}
+                                    style={{
+                                        background: '#c0392b',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        padding: '4px 8px',
+                                        flexShrink: 0
+                                    }}
+                                >
+                                    X
+                                </button>
+                            </div>
+                        ))
                     ) : ( <p>Aún no hay canciones en la cola.</p> )}
                 </div>
             </div>
