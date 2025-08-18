@@ -1,214 +1,81 @@
-// src/GuestRoom.jsx - VERSIÓN CORREGIDA (Arregla el bucle de "Cargando...")
-import { useState, useEffect, useRef, useCallback } from 'react';
+// src/GuestRoom.jsx - Con Cola de Turnos Unificada y Manejo de Errores
+import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 import Peer from 'simple-peer';
 
-const Toast = ({ message, onDone }) => {
-    useEffect(() => {
-        const timer = setTimeout(() => onDone(), 2500);
-        return () => clearTimeout(timer);
-    }, [onDone]);
-    return ( <div style={{ position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)', background: 'var(--success)', color: 'white', padding: '12px 24px', borderRadius: 'var(--border-radius)', zIndex: 1000, boxShadow: '0 4px 15px rgba(0,0,0,0.2)' }}>{message}</div> );
-};
+const Toast = ({ message, onDone }) => { useEffect(() => { const timer = setTimeout(() => onDone(), 3000); return () => clearTimeout(timer); }, [onDone]); return ( <div style={{ position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)', background: 'var(--success)', color: 'white', padding: '12px 24px', borderRadius: 'var(--border-radius)', zIndex: 1000, boxShadow: '0 4px 15px rgba(0,0,0,0.2)' }}>{message}</div> ); };
+const getGuestId = () => { let id = localStorage.getItem('guestId'); if (!id) { id = `guest_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`; localStorage.setItem('guestId', id); } return id; };
 
 export default function GuestRoom() {
     const { partyId } = useParams();
+    const guestId = getGuestId();
     const [party, setParty] = useState(null);
-    const [connectionStatus, setConnectionStatus] = useState('Conectando...');
+    const [guestName, setGuestName] = useState(localStorage.getItem('guestName') || '');
+    const [nameIsSet, setNameIsSet] = useState(!!localStorage.getItem('guestName'));
     const [songQueue, setSongQueue] = useState([]);
     const [currentlyPlaying, setCurrentlyPlaying] = useState(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
     const [notification, setNotification] = useState('');
-    
-    const [isMuted, setIsMuted] = useState(false);
-    const [activeEffect, setActiveEffect] = useState('none');
+    const [connectionStatus, setConnectionStatus] = useState('Conectando...');
     const peerRef = useRef();
-    const rawMicStreamRef = useRef();
-    
-    const audioContextRef = useRef();
-    const sourceNodeRef = useRef();
-    const effectNodeRef = useRef();
-    const destinationNodeRef = useRef();
-    const gainNodeRef = useRef();
-    const compressorNodeRef = useRef();
-    const [micVolume, setMicVolume] = useState(1);
-
-    const setupAudioEngine = useCallback(async () => {
-        try {
-            const rawStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-            rawMicStreamRef.current = rawStream;
-            setConnectionStatus('Micrófono listo ✅');
-
-            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            audioContextRef.current = audioContext;
-            
-            sourceNodeRef.current = audioContext.createMediaStreamSource(rawStream);
-            gainNodeRef.current = audioContext.createGain();
-            destinationNodeRef.current = audioContext.createMediaStreamDestination();
-            compressorNodeRef.current = audioContext.createDynamicsCompressor();
-            
-            compressorNodeRef.current.threshold.setValueAtTime(-50, audioContext.currentTime);
-            compressorNodeRef.current.knee.setValueAtTime(40, audioContext.currentTime);
-            compressorNodeRef.current.ratio.setValueAtTime(12, audioContext.currentTime);
-            compressorNodeRef.current.attack.setValueAtTime(0, audioContext.currentTime);
-            compressorNodeRef.current.release.setValueAtTime(0.25, audioContext.currentTime);
-
-            sourceNodeRef.current.connect(gainNodeRef.current);
-            gainNodeRef.current.connect(compressorNodeRef.current);
-            compressorNodeRef.current.connect(destinationNodeRef.current);
-            
-            setupWebRTC(destinationNodeRef.current.stream);
-
-        } catch (err) {
-            setConnectionStatus('Error: Micrófono denegado.');
-        }
-    }, [partyId]);
-
-    const setupWebRTC = (processedStream) => {
-        const webrtcChannel = supabase.channel(`webrtc-party-${partyId}`);
-        const peer = new Peer({ initiator: true, trickle: false, stream: processedStream });
-        peerRef.current = peer;
-        peer.on('signal', offer => webrtcChannel.send({ type: 'broadcast', event: 'signal-offer', payload: { offer } }));
-        webrtcChannel.on('broadcast', { event: 'signal-answer' }, ({ payload }) => { if (payload.answer && !peer.connected) peer.signal(payload.answer); });
-        peer.on('connect', () => setConnectionStatus('¡Conectado! 🎤'));
-        peer.on('close', () => setConnectionStatus('Desconectado'));
-        peer.on('error', () => setConnectionStatus('Error'));
-        webrtcChannel.subscribe();
-    };
-
-    const applyEffect = (effectType) => {
-        if (!compressorNodeRef.current) return;
-        compressorNodeRef.current.disconnect();
-        if (effectNodeRef.current) {
-            effectNodeRef.current.disconnect();
-            effectNodeRef.current = null;
-        }
-        if (effectType === 'reverb') {
-            const convolver = audioContextRef.current.createConvolver();
-            convolver.buffer = createImpulseResponse(audioContextRef.current);
-            effectNodeRef.current = convolver;
-            compressorNodeRef.current.connect(effectNodeRef.current);
-            effectNodeRef.current.connect(destinationNodeRef.current);
-        } else {
-            compressorNodeRef.current.connect(destinationNodeRef.current);
-        }
-        setActiveEffect(effectType);
-    };
-
-    function createImpulseResponse(context) { const rate = context.sampleRate; const length = rate * 2; const impulse = context.createBuffer(2, length, rate); const left = impulse.getChannelData(0); const right = impulse.getChannelData(1); for (let i = 0; i < length; i++) { const n = length - i; left[i] = (Math.random() * 2 - 1) * Math.pow(n / length, 2.5); right[i] = (Math.random() * 2 - 1) * Math.pow(n / length, 2.5); } return impulse; }
+    const audioStreamRef = useRef();
+    const [isMuted, setIsMuted] = useState(false);
 
     useEffect(() => {
-        // --- LÓGICA DE CARGA DE DATOS RESTAURADA ---
-        const setupGuestExperience = async () => {
-            // Cargar datos de la fiesta (¡ESTO FALTABA!)
+        const fetchAndSyncData = async () => {
             supabase.from('parties').select('*').eq('id', partyId).single().then(({ data }) => setParty(data));
-
-            // Cargar estado inicial de la cola
             const { data: queueData } = await supabase.from('song_queue').select('*').eq('party_id', partyId).eq('status', 'queued').order('created_at', { ascending: true });
             setSongQueue(queueData || []);
-            
-            const { data: playedSongs } = await supabase.from('song_queue').select('*').eq('party_id', partyId).eq('status', 'played').order('updated_at', { ascending: false }).limit(1);
-            if (playedSongs && playedSongs.length > 0) setCurrentlyPlaying(playedSongs[0]);
+            const { data: playingData } = await supabase.from('song_queue').select('*').eq('party_id', partyId).eq('status', 'played').order('updated_at', { ascending: false }).limit(1);
+            setCurrentlyPlaying(playingData?.[0] || null);
         };
-        
-        setupGuestExperience();
-        setupAudioEngine();
-        
-        const songsChannel = supabase.channel(`party_queue_${partyId}`);
-        songsChannel.on('postgres_changes', { event: '*', schema: 'public', table: 'song_queue', filter: `party_id=eq.${partyId}` }, async () => {
-            const { data: uQ } = await supabase.from('song_queue').select('*').eq('party_id', partyId).eq('status', 'queued').order('created_at', { ascending: true });
-            setSongQueue(uQ || []);
-            const { data: uP } = await supabase.from('song_queue').select('*').eq('party_id', partyId).eq('status', 'played').order('updated_at', { ascending: false }).limit(1);
-            if (uP && uP.length > 0) setCurrentlyPlaying(uP[0]); else setCurrentlyPlaying(null);
-        }).subscribe();
-
+        fetchAndSyncData();
+        const songsChannel = supabase.channel(`party_queue_${partyId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'song_queue', filter: `party_id=eq.${partyId}` }, () => fetchAndSyncData()).subscribe();
+        const webrtcChannel = supabase.channel(`webrtc-party-${partyId}`); async function setupWebRTC() { try { const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); audioStreamRef.current = stream; setConnectionStatus('Micrófono listo ✅'); const peer = new Peer({ initiator: true, trickle: false, stream: stream }); peerRef.current = peer; peer.on('signal', offer => webrtcChannel.send({ type: 'broadcast', event: 'signal-offer', payload: { offer } })); webrtcChannel.on('broadcast', { event: 'signal-answer' }, ({ payload }) => { if (payload.answer && !peer.connected) peer.signal(payload.answer); }); peer.on('connect', () => setConnectionStatus('¡Conectado! 🎤')); peer.on('close', () => setConnectionStatus('Desconectado')); peer.on('error', () => setConnectionStatus('Error')); } catch (err) { setConnectionStatus('Micrófono denegado.'); } } setupWebRTC(); webrtcChannel.subscribe();
         return () => {
             supabase.removeChannel(songsChannel);
+            supabase.removeChannel(webrtcChannel);
             if (peerRef.current) peerRef.current.destroy();
-            if (rawMicStreamRef.current) rawMicStreamRef.current.getTracks().forEach(track => track.stop());
-            if (audioContextRef.current) audioContextRef.current.close();
+            if (audioStreamRef.current) audioStreamRef.current.getTracks().forEach(track => track.stop());
         };
-    }, [setupAudioEngine, partyId]);
+    }, [partyId]);
 
-    const handleVolumeChange = (e) => {
-        const newVolume = parseFloat(e.target.value);
-        setMicVolume(newVolume);
-        if (gainNodeRef.current && !isMuted) {
-            gainNodeRef.current.gain.setValueAtTime(newVolume, audioContextRef.current.currentTime);
-        }
-    };
-    
-    const toggleMute = () => {
-        if (gainNodeRef.current) {
-            const newMutedState = !isMuted;
-            const volumeToSet = newMutedState ? 0 : micVolume;
-            gainNodeRef.current.gain.setValueAtTime(volumeToSet, audioContextRef.current.currentTime);
-            setIsMuted(newMutedState);
-        }
-    };
-    
+    const handleSetGuestName = () => { if (!guestName.trim()) { alert('Por favor, introduce tu nombre.'); return; } localStorage.setItem('guestName', guestName.trim()); setNameIsSet(true); };
     const handleSearch = async (e) => { e.preventDefault(); if (!searchQuery.trim()) return; setIsSearching(true); const { data } = await supabase.functions.invoke('search-youtube', { body: { query: `${searchQuery} karaoke` } }); setSearchResults(data.results || []); setIsSearching(false); };
-    const handleAddToQueue = async (song) => { await supabase.from('song_queue').insert({ party_id: partyId, video_id: song.videoId, title: song.title, thumbnail_url: song.thumbnail, status: 'queued' }); setSearchResults([]); setSearchQuery(''); setNotification('¡Canción añadida!'); };
+    
+    const handleAddToQueue = async (song, assignGuest = false) => {
+        const newSong = { party_id: partyId, video_id: song.videoId, title: song.title, thumbnail_url: song.thumbnail, guest_id: assignGuest ? guestId : null, guest_name: assignGuest ? guestName : null };
+        const { error } = await supabase.from('song_queue').insert(newSong);
+        if (error) {
+            console.error("Error al añadir la canción:", error);
+            alert(`Error al añadir la canción: ${error.message}`);
+        } else {
+            setSearchResults([]);
+            setSearchQuery('');
+            setNotification(assignGuest ? '¡Tu turno fue añadido!' : '¡Canción añadida a la fiesta!');
+        }
+    };
 
-    if (!party) return <div className="text-center" style={{paddingTop: '50px'}}>Cargando...</div>;
+    const amIInQueue = songQueue.some(song => song.guest_id === guestId);
+    const isSomeoneSingingNow = currentlyPlaying && currentlyPlaying.guest_id;
+    const toggleMute = () => { if (audioStreamRef.current) { const audioTrack = audioStreamRef.current.getAudioTracks()[0]; if (audioTrack) { audioTrack.enabled = !audioTrack.enabled; setIsMuted(!audioTrack.enabled); } } };
+    
+    if (!party) return <div style={{textAlign: 'center', paddingTop: '50px'}}>Cargando...</div>;
+    if (!nameIsSet) { return ( <div className="guest-view" style={{textAlign: 'center'}}> <h1>¡Bienvenido a {party.name}!</h1> <p>Para unirte a la diversión, por favor dinos tu nombre.</p> <input type="text" placeholder="Tu nombre o apodo" value={guestName} onChange={(e) => setGuestName(e.target.value)} style={{marginBottom: '1rem'}} /> <button onClick={handleSetGuestName} disabled={!guestName.trim()}>Guardar Nombre</button> </div> ); }
 
     return (
         <div className="guest-view">
             {notification && <Toast message={notification} onDone={() => setNotification('')} />}
-            <div className="text-center">
-                <h1 style={{fontSize: '2.5rem', marginBottom: '0.5rem'}}>🎉 {party.name}</h1>
-            </div>
-            
-            <div className="mic-status" style={{textAlign: 'center', margin: '1.5rem 0'}}>
-                <strong>Estado:</strong> {connectionStatus}
-            </div>
-
-            <button className={`mic-control-button ${isMuted ? 'muted' : ''}`} onClick={toggleMute} disabled={!rawMicStreamRef.current}>
-                {isMuted ? '🔇' : '🎤'}
-                <span>{isMuted ? 'Micrófono Apagado' : 'Micrófono Encendido'}</span>
-            </button>
-            
-            <div className="volume-control">
-                 <label htmlFor="volume">Volumen del Micrófono</label>
-                 <input 
-                    id="volume"
-                    type="range" 
-                    min="0" 
-                    max="2"
-                    step="0.1" 
-                    value={micVolume}
-                    onChange={handleVolumeChange}
-                    className="volume-slider"
-                    disabled={isMuted}
-                 />
-            </div>
-
-            <div className="effects-box">
-                <h4 style={{textAlign: 'center', marginBottom: '1rem'}}>Efectos de Voz</h4>
-                <div className="effects-selector">
-                    <button onClick={() => applyEffect('none')} className={activeEffect === 'none' ? 'active' : ''}>Normal</button>
-                    <button onClick={() => applyEffect('reverb')} className={activeEffect === 'reverb' ? 'active' : ''}>Reverb</button>
-                </div>
-            </div>
-
-            {currentlyPlaying && <div className="currently-playing">
-                <h3>🎵 Sonando ahora:</h3>
-                <p style={{margin: 0, fontSize: '1.1rem', color: 'var(--text-secondary)'}}>{currentlyPlaying.title}</p>
-            </div>}
-            
-            <div className="search-box">
-                <h4>Añadir Canción</h4>
-                <form onSubmit={handleSearch}>{/* ... */}</form>
-                {searchResults.length > 0 && <div className="queue-list" style={{marginTop: '1rem'}}>{/* ... */}</div>}
-            </div>
-
-            <div className="queue-box">
-                <h3 style={{marginTop: 0}}>Siguientes en la Cola ({songQueue.length})</h3>
-                <div className="queue-list">{/* ... */}</div>
-            </div>
+            <div className="text-center"> <h1 style={{fontSize: '2.5rem', marginBottom: '0.5rem'}}>🎉 {party.name}</h1> <p>¡Hola, {guestName}!</p> </div>
+            <div className="mic-status" style={{textAlign: 'center', margin: '1.5rem 0'}}><strong>Micrófono:</strong> {connectionStatus}</div>
+            <button className={`mic-control-button ${isMuted ? 'muted' : ''}`} onClick={toggleMute} disabled={!audioStreamRef.current}> {isMuted ? '🔇' : '🎤'} <span>{isMuted ? 'Micrófono Apagado' : 'Micrófono Encendido'}</span> </button>
+            {currentlyPlaying && ( <div className="currently-playing"> <h3>🎵 Sonando ahora:</h3> <p style={{margin: 0, fontSize: '1.1rem', color: isSomeoneSingingNow ? 'var(--text-primary)' : 'var(--success)'}}> {isSomeoneSingingNow ? `Canta ${currentlyPlaying.guest_name}: ${currentlyPlaying.title}` : `¡Canción libre! ${currentlyPlaying.title}`} </p> </div> )}
+            {!isSomeoneSingingNow && currentlyPlaying && !amIInQueue && ( <div className="incentive-box" style={{textAlign: 'center', padding: '1rem', border: '1px dashed var(--success)', borderRadius: 'var(--border-radius)', marginBottom: '1.5rem'}}> <p>¡Esta canción no tiene cantante! ¿Te animas a unirte a la fila?</p> </div> )}
+            <div className="search-box"> <h4>Añadir Canción</h4> <form onSubmit={handleSearch}> <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Busca tu canción..."/> <button type="submit" disabled={isSearching} style={{width: '100%'}}>{isSearching ? 'Buscando...' : 'Buscar'}</button> </form> {searchResults.length > 0 && <div className="queue-list" style={{marginTop: '1rem'}}> {searchResults.map(song => ( <div key={song.videoId} className="song-item"> <img src={song.thumbnail} alt={song.title} /> <div className="details"><span className="title">{song.title}</span></div> <div className="actions" style={{display: 'flex', flexDirection: 'column', gap: '5px'}}> <button className="add-btn" onClick={() => handleAddToQueue(song, true)}>🎤 Cantarla</button> <button onClick={() => handleAddToQueue(song, false)} style={{backgroundColor: '#555'}}>➕ Añadir</button> </div> </div> ))} </div>} </div>
+            <div className="queue-box"> <h3 style={{marginTop: 0}}>Próximos Turnos ({songQueue.length})</h3> <div className="queue-list"> {songQueue.length > 0 ? ( songQueue.map((song, i) => ( <div key={song.id} className={`song-item ${i === 0 ? 'next-up' : ''}`}> <img src={song.thumbnail_url} alt={song.title} /> <div className="details"> <span className="title">{i + 1}. {song.title}</span> <span style={{color: 'var(--text-secondary)', fontSize: '0.9rem'}}> {song.guest_name ? `por ${song.guest_name}` : 'Canción de la casa'} </span> </div> </div> )) ) : ( <p style={{color: 'var(--text-secondary)'}}>La cola está vacía. ¡Añade una canción!</p> )} </div> </div>
         </div>
     );
 }
